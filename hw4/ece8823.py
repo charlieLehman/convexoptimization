@@ -26,12 +26,14 @@ class GradientDescent(object):
             if d['name'] == 'backtracking':
                 self.alpha = d['alpha']
                 self.beta = d['beta']
-                return_dict.update({k:self._solve_backtracking(x0, max_iter, tol)})
+                _x,_k = self._solve_backtracking(x0, max_iter, tol)
             elif d['name'] == 'newton':
                 self.hess_f = d['hess_f']
-                return_dict.update({k:self._solve_newton(x0, max_iter, tol)})
+                _x,_k = self._solve_newton(x0, max_iter, tol)
             else:
                 raise NotImplementedError('{} is not an implemented method.'.format(d['name']))
+
+            return_dict.update({k:{'x':_x, 'k':_k}})
         return return_dict
 
     def _solve_newton(self, x0, max_iter, tol):
@@ -39,17 +41,19 @@ class GradientDescent(object):
         for k in range(max_iter):
 
             # Update Direction
-            d = -self.grad_f(self.x).T
+            inv_hess = np.linalg.inv(self.hess_f(self.x))
+            print(inv_hess)
+            grd = -self.grad_f(self.x)
+            d = inv_hess@grd.T
 
             # Termination Condition
-            inv_hess = np.linalg.inv(self.grad_f(self.x))
-            _dd = d.T@inv_hess@d/2
+            _dd = grd@d/2
             if _dd <= tol:
-                self.k = k
-                return self.x
+                return self.x, k
 
             # Update Step Size
-            self.x += inv_hess*d
+            self.x += d
+        return self.x, k
 
     def _solve_backtracking(self, x0, max_iter, tol):
         self.x = x0.copy()
@@ -61,12 +65,12 @@ class GradientDescent(object):
             # Termination Condition
             _dd = d.T@d
             if _dd <= tol:
-                self.k = k
-                return self.x
+                return self.x, k
 
             # Update Step Size
             t = self._backtracking(d, -_dd)
             self.x += t*d
+        return self.x, k
 
     def _backtracking(self, d, _dd):
         t = 1
