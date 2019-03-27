@@ -1,66 +1,99 @@
 import numpy as np
-from tqdm import tqdm
+from tqdm import tqdm_notebook as tqdm
+from tqdm import tnrange as trange
+from time import time
 
 class GradientDescent(object):
-    SOLVER_PARAMS_DEFAULT = {
-        'method':{
-            'name':'backtracking',
-            'f':None,
-            'grad_f':None,
-            'alpha':0.001,
-            'beta':0.8
-        },
-    }
-
-    def __init__(self, solver_params=SOLVER_PARAMS_DEFAULT):
+    def __init__(self, solver_params):
         self.solver_params = solver_params
         self.x = None
         self.k = 0
 
-    def solve(self, x0, max_iter, tol):
+    def _error(self):
+        return self.f(self.x)
+
+    def solve(self, max_iter, tol):
         return_dict = {}
         for k, d in self.solver_params.items():
-            print('Running {}'.format(k))
             self.f = d['f']
+            self.alpha = d.get('alpha', None)
+            self.beta = d.get('beta', None)
+            self.should_backtrack = (self.alpha is not None) and (self.beta is not None)
             self.grad_f = d['grad_f']
+            x0 = d['x0']
+            start = time()
             if d['name'] == 'backtracking':
-                self.alpha = d['alpha']
-                self.beta = d['beta']
                 _x,_k = self._solve_backtracking(x0, max_iter, tol)
             elif d['name'] == 'newton':
                 self.hess_f = d['hess_f']
                 _x,_k = self._solve_newton(x0, max_iter, tol)
+            elif d['name'] == 'bfgs':
+                self.hess_f = d['hess_f']
+                _x,_k = self._solve_bfgs(x0, max_iter, tol)
             else:
                 raise NotImplementedError('{} is not an implemented method.'.format(d['name']))
 
-            return_dict.update({k:{'x':_x, 'k':_k}})
+            _t = time()-start
+            return_dict.update({k:{'x':_x, 'k':_k, 't':_t}})
         return return_dict
 
-    def _solve_newton(self, x0, max_iter, tol):
+    def _solve_bfgs(self, x0, max_iter, tol):
         self.x = x0.copy()
-        for k in range(max_iter):
+        P = np.linalg.inv(self.hess_f(self.x))
+        for k in trange(max_iter):
 
             # Update Direction
-            inv_hess = np.linalg.inv(self.hess_f(self.x))
-            print(inv_hess)
             grd = -self.grad_f(self.x)
-            d = inv_hess@grd.T
+            d = P.dot(grd)
 
             # Termination Condition
-            _dd = grd@d/2
+            _dd = grd.T.dot(d)/2
             if _dd <= tol:
                 return self.x, k
 
             # Update Step Size
-            self.x += d
+            t = 1
+            if self.should_backtrack:
+                t = self._backtracking(d, -_dd)
+            x_old = self.x.copy()
+            self.x += t*d
+
+            if k > 0:
+                s = self.x - x_old
+                s_t = P@s
+                y = grd - grd_old
+                P += -s_t@s_t.T/(s.T@s_t) + y@y.T/(y.T@s)
+            grd_old = grd.copy()
+
+        return self.x, k
+
+    def _solve_newton(self, x0, max_iter, tol):
+        self.x = x0.copy()
+        for k in trange(max_iter):
+
+            # Update Direction
+            inv_hess = np.linalg.inv(self.hess_f(self.x))
+            grd = -self.grad_f(self.x)
+            d = inv_hess.dot(grd)
+
+            # Termination Condition
+            _dd = grd.T.dot(d)/2
+            if _dd <= tol:
+                return self.x, k
+
+            # Update Step Size
+            t = 1
+            if self.should_backtrack:
+                t = self._backtracking(d, -_dd)
+            self.x += t*d
         return self.x, k
 
     def _solve_backtracking(self, x0, max_iter, tol):
         self.x = x0.copy()
-        for k in range(max_iter):
+        for k in trange(max_iter):
 
             # Update Direction
-            d = -self.grad_f(self.x).T
+            d = -self.grad_f(self.x)
 
             # Termination Condition
             _dd = d.T@d
@@ -78,6 +111,10 @@ class GradientDescent(object):
         c2 = lambda t: self.f(self.x) + self.alpha*t*_dd
         cond = c1(t) < c2(t)
         while not cond:
+            if np.isinf(c1(t)) or np.isinf(c2(t)):
+                raise Exception('INFINITY')
+                break
+
             t *= self.beta
             cond = c1(t) < c2(t)
         return t
